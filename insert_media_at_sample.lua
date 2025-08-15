@@ -81,54 +81,19 @@ function split_csv_line(line)
   return fields
 end
 
-function InsertMediaFromCSV()
-  -- Get user inputs for CSV path, WAV path, and sound name
-  local retval, user_input = reaper.GetUserInputs("Insert Media from CSV", 3,
-    "CSV Path:,WAV Path:,Sound Name:",
-    ",,")
-  if not retval then
-    return -- User cancelled
-  end
-
-  local inputs = {}
-  for input in user_input:gmatch("([^,]+)") do
-    table.insert(inputs, input)
-  end
-
-  if #inputs < 3 then
-    reaper.ShowMessageBox("Please provide all required inputs", "Error", 0)
-    return
-  end
-
-  local csv_path = inputs[1]:gsub("^%s*(.-)%s*$", "%1") -- trim whitespace
-  local wav_path = inputs[2]:gsub("^%s*(.-)%s*$", "%1")
-  local sound_name = inputs[3]:gsub("^%s*(.-)%s*$", "%1")
-
-  if csv_path == "" or wav_path == "" or sound_name == "" then
-    reaper.ShowMessageBox("CSV Path, WAV Path, and Sound Name must be provided", "Error", 0)
-    return
-  end
-
-  -- Find folder track by sound_name
-  local folder_track, folder_index = FindFolderTrackByName(sound_name)
-  if not folder_track then
-    reaper.ShowMessageBox("Folder track named '" .. sound_name .. "' not found", "Error", 0)
-    return
-  end
-
-  -- Open CSV file
-  local file = io.open(csv_path, "r")
+-- Read distinct Start_Addr values from CSV
+function ReadDistinctStartAddrs(csv_file)
+  local file = io.open(csv_file, "r")
   if not file then
-    reaper.ShowMessageBox("Failed to open CSV file: " .. csv_path, "Error", 0)
-    return
+    reaper.ShowMessageBox("Failed to open CSV file: " .. csv_file, "Error", 0)
+    return nil
   end
 
-  -- Read header line to get column indices
   local header = file:read("*l")
   if not header then
     reaper.ShowMessageBox("CSV file is empty", "Error", 0)
     file:close()
-    return
+    return nil
   end
 
   local headers = split_csv_line(header)
@@ -137,42 +102,84 @@ function InsertMediaFromCSV()
     col_indices[col_name] = i
   end
 
-  -- Check required columns
-  local required_cols = {"SampleNum", "Voice", "Start_Addr"}
-  for _, col in ipairs(required_cols) do
-    if not col_indices[col] then
-      reaper.ShowMessageBox("CSV missing required column: " .. col, "Error", 0)
-      file:close()
-      return
-    end
+  if not col_indices["Start_Addr"] then
+    reaper.ShowMessageBox("CSV missing required column: Start_Addr", "Error", 0)
+    file:close()
+    return nil
   end
 
-  -- Begin undo block
-  reaper.Undo_BeginBlock()
+  local distinct_addrs = {}
+  local addr_set = {}
 
-  -- Process each line
   for line in file:lines() do
     local fields = split_csv_line(line)
-    if fields[col_indices["Start_Addr"]] == sound_name then
-      local voice_num = tonumber(fields[col_indices["Voice"]])
-      local track_index = folder_index + 1 + voice_num -- child track index relative to folder
-      local voice_str = string.format("%02d", voice_num)
-      local sound_name_val = fields[col_indices["Start_Addr"]]
-      local sample_position = tonumber(fields[col_indices["SampleNum"]])
-      local file_name = string.format("%s_vox%s_%s.wav", sound_name_val, voice_str, sample_position)
-      local media_file_path = string.format("%s/%s/%s", wav_path, sound_name_val, file_name)
-
-      if track_index and media_file_path and sample_position then
-        InsertMediaAtSample(track_index, media_file_path, sample_position)
-      else
-        reaper.ShowMessageBox("Invalid data in CSV row, skipping", "Warning", 0)
-      end
+    local addr = fields[col_indices["Start_Addr"]]
+    if addr and not addr_set[addr] then
+      addr_set[addr] = true
+      table.insert(distinct_addrs, addr)
     end
   end
 
   file:close()
+  return distinct_addrs
+end
 
-  -- End undo block
+function InsertMediaFromCSV()
+  -- Get user inputs for CSV path and WAV path
+  local retval, user_input = reaper.GetUserInputs("Insert Media from CSV", 2,
+    "CSV Path:,WAV Path:",
+    ",")
+  if not retval then return end
+
+  local inputs = {}
+  for input in user_input:gmatch("([^,]+)") do
+    table.insert(inputs, input)
+  end
+  if #inputs < 2 then
+    reaper.ShowMessageBox("Please provide CSV Path and WAV Path", "Error", 0)
+    return
+  end
+
+  local csv_path = inputs[1]:gsub("^%s*(.-)%s*$", "%1")
+  local wav_path = inputs[2]:gsub("^%s*(.-)%s*$", "%1")
+  if csv_path == "" or wav_path == "" then
+    reaper.ShowMessageBox("CSV Path and WAV Path must be provided", "Error", 0)
+    return
+  end
+
+  local distinct_addrs = ReadDistinctStartAddrs(csv_path)
+  if not distinct_addrs then return end
+
+  -- Prepare column indices
+  local f0 = io.open(csv_path, "r")
+  local header = f0:read("*l")
+  local headers = split_csv_line(header)
+  local col_indices = {}
+  for i, col in ipairs(headers) do col_indices[col] = i end
+  f0:close()
+
+  reaper.Undo_BeginBlock()
+  for _, sound_name in ipairs(distinct_addrs) do
+    local folder_track, folder_index = FindFolderTrackByName(sound_name)
+    if not folder_track then
+      reaper.ShowMessageBox("Folder track named '" .. sound_name .. "' not found", "Error", 0)
+    else
+      local f = io.open(csv_path, "r")
+      f:read("*l") -- skip header
+      for line in f:lines() do
+        local fields = split_csv_line(line)
+        if fields[col_indices["Start_Addr"]] == sound_name then
+          local voice_num = tonumber(fields[col_indices["Voice"]])
+          local track_index = folder_index + 1 + voice_num
+          local sample_position = tonumber(fields[col_indices["Timestamp"]])
+          local file_name = string.format("%s_vox%02d_%d.wav", sound_name, voice_num, sample_position)
+          local media_file_path = string.format("%s/%s/%s", wav_path, sound_name, file_name)
+          InsertMediaAtSample(track_index, media_file_path, sample_position)
+        end
+      end
+      f:close()
+    end
+  end
   reaper.Undo_EndBlock("Insert media from CSV", -1)
 end
 
