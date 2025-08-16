@@ -24,13 +24,13 @@ function InsertMediaAtSample(track_index, media_file_path, sample_position)
   -- Get the track (0-based index)
   local track = reaper.GetTrack(0, track_index)
   if not track then
-    reaper.ShowMessageBox("Track " .. track_index .. " not found", "Error", 0)
+    reaper.ShowConsoleMsg("Track " .. track_index .. " not found", "Error", 0)
     return false
   end
 
   -- Check if media file exists
   if not reaper.file_exists(media_file_path) then
-    reaper.ShowMessageBox("Media file not found: " .. media_file_path, "Error", 0)
+    reaper.ShowConsoleMsg("Media file not found: " .. media_file_path, "Error", 0)
     return false
   end
 
@@ -126,8 +126,8 @@ end
 
 function InsertMediaFromCSV()
   -- Get user inputs for CSV path and WAV path
-  local retval, user_input = reaper.GetUserInputs("Insert Media from CSV", 2,
-    "CSV Path:,WAV Path:",
+  local retval, user_input = reaper.GetUserInputs("Insert Media from CSV", 1,
+    "CSV Path:",
     ",")
   if not retval then return end
 
@@ -135,15 +135,14 @@ function InsertMediaFromCSV()
   for input in user_input:gmatch("([^,]+)") do
     table.insert(inputs, input)
   end
-  if #inputs < 2 then
+  if #inputs < 1 then
     reaper.ShowMessageBox("Please provide CSV Path and WAV Path", "Error", 0)
     return
   end
 
-  local csv_path = inputs[1]:gsub("^%s*(.-)%s*$", "%1")
-  local wav_path = inputs[2]:gsub("^%s*(.-)%s*$", "%1")
-  if csv_path == "" or wav_path == "" then
-    reaper.ShowMessageBox("CSV Path and WAV Path must be provided", "Error", 0)
+  local csv_path = "/Users/unclmike/Music/psf_dumps/" .. inputs[1]:gsub("^%s*(.-)%s*$", "%1")
+  if csv_path == "" then
+    reaper.ShowMessageBox("CSV Path must be provided", "Error", 0)
     return
   end
 
@@ -162,19 +161,23 @@ function InsertMediaFromCSV()
   for _, sound_name in ipairs(distinct_addrs) do
     local folder_track, folder_index = FindFolderTrackByName(sound_name)
     if not folder_track then
-      reaper.ShowMessageBox("Folder track named '" .. sound_name .. "' not found", "Error", 0)
+      reaper.ShowConsoleMsg("Folder track named '" .. sound_name .. "' not found", "Error", 0)
     else
+      local inputs = io.open("inputs.txt", r)
       local f = io.open(csv_path, "r")
       f:read("*l") -- skip header
       for line in f:lines() do
         local fields = split_csv_line(line)
         if fields[col_indices["Start_Addr"]] == sound_name then
+          local note_on = tonumber(fields[col_indices["On"]])
           local voice_num = tonumber(fields[col_indices["Voice"]])
           local track_index = folder_index + 1 + voice_num
           local sample_position = tonumber(fields[col_indices["Timestamp"]])
           local file_name = string.format("%s_vox%02d_%d.wav", sound_name, voice_num, sample_position)
-          local media_file_path = string.format("%s/%s/%s", wav_path, sound_name, file_name)
-          InsertMediaAtSample(track_index, media_file_path, sample_position)
+          local media_file_path = string.format("/Users/unclmike/src/psf_rebuild_2/tmp/%s/%s", sound_name, file_name)
+          if note_on == 1 then
+            InsertMediaAtSample(track_index, media_file_path, sample_position)
+          end
         end
       end
       f:close()

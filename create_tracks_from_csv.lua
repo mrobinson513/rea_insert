@@ -173,7 +173,7 @@ function Main()
     local folder_track, folder_index = FindFolderTrackByName(addr)
     local sum_track, sum_index = FindTrackByName("Sum " .. addr)
     if not folder_track or not sum_track then
-      reaper.ShowMessageBox("Folder track named '" .. addr .. "' not found", "Error", 0)
+      reaper.ShowConsoleMsg("Folder track named '" .. addr .. "' not found", "Error", 0)
       return
     else
       local _, str_folder_track = reaper.GetSetMediaTrackInfo_String(folder_track, "P_NAME", "", false)
